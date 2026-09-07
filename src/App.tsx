@@ -151,14 +151,15 @@ export default function App() {
     setResult(null)
     setSelected(null)
     setShutterBump(true)
-    setScanPhase('flash')
-    setStatus('快門……')
 
     try {
+      // Capture before pausing / overlay so mobile browsers keep a valid video frame.
       const frame = captureFrame(video)
       setLastPhoto(frame.dataUrl)
+      setScanPhase('flash')
+      setStatus('快門……')
 
-      await new Promise((r) => setTimeout(r, 280))
+      await new Promise((r) => setTimeout(r, 220))
       setScanPhase('loading')
       setStatus('正在辨認……')
 
@@ -229,7 +230,7 @@ export default function App() {
     <div className={`app-shell view-${view} ${demoMode ? 'demo-on' : ''} ${mirrorCapture ? 'mirror-capture' : ''}`}>
       <CameraFeed
         demoMode={demoMode}
-        paused={scanPhase === 'loading' || scanPhase === 'flash'}
+        paused={scanPhase === 'loading'}
         onReady={onReady}
         onError={onCamError}
         onMirrorChange={onMirrorChange}

@@ -117,6 +117,7 @@ async function identifyViaReverse(env, cleaned, mimeType, locationHint) {
         },
       ],
     }),
+    signal: AbortSignal.timeout(50_000),
   })
 
   const body = await reverseRes.json().catch(() => ({}))
