@@ -149,14 +149,14 @@ export default function App() {
     setScanPhase('flash')
     setStatus('快門……')
 
-    const frame = captureFrame(video)
-    setLastPhoto(frame.dataUrl)
-
-    await new Promise((r) => setTimeout(r, 280))
-    setScanPhase('loading')
-    setStatus('正在辨認……')
-
     try {
+      const frame = captureFrame(video)
+      setLastPhoto(frame.dataUrl)
+
+      await new Promise((r) => setTimeout(r, 280))
+      setScanPhase('loading')
+      setStatus('正在辨認……')
+
       const data = await identifySpecies(frame.dataUrl, frame.mimeType, location)
       setResult(data)
       setSelected(data.candidates[0] || null)

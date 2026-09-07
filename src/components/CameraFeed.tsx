@@ -43,7 +43,11 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
     async function playDemoClip(video: HTMLVideoElement, index: number) {
       const list = listRef.current
       if (!list.length) throw new Error('empty playlist')
-      video.src = list[index % list.length]
+      const src = list[index % list.length]
+      // Cross-origin demo clips need CORS so canvas capture (toDataURL) is allowed.
+      if (/^https?:\/\//i.test(src)) video.crossOrigin = 'anonymous'
+      else video.removeAttribute('crossorigin')
+      video.src = src
       video.loop = list.length === 1
       video.muted = true
       video.playsInline = true
@@ -101,6 +105,7 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
           },
         })
         if (cancelled) return
+        video.removeAttribute('crossorigin')
         video.srcObject = stream
         video.loop = false
         await video.play()
@@ -127,7 +132,7 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
 
   return (
     <div className={`camera-plane ${demoMode ? 'is-demo' : ''}`}>
-      <video ref={videoRef} playsInline muted autoPlay />
+      <video ref={videoRef} playsInline muted autoPlay crossOrigin={demoMode ? 'anonymous' : undefined} />
       {!live && <div className="fallback-grid" />}
     </div>
   )
