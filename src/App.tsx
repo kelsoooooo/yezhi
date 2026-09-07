@@ -66,6 +66,7 @@ export default function App() {
       return false
     }
   })
+  const [mirrorCapture, setMirrorCapture] = useState(false)
 
   const entries = useMemo(() => codexList(player), [player])
 
@@ -73,6 +74,10 @@ export default function App() {
     videoRef.current = video
     setCameraError(null)
     setStatus('鏡頭已開啟 · 可以開始觀察')
+  }, [])
+
+  const onMirrorChange = useCallback((mirror: boolean) => {
+    setMirrorCapture(mirror)
   }, [])
 
   const onCamError = useCallback((message: string) => {
@@ -221,12 +226,13 @@ export default function App() {
       : undefined
 
   return (
-    <div className={`app-shell view-${view} ${demoMode ? 'demo-on' : ''}`}>
+    <div className={`app-shell view-${view} ${demoMode ? 'demo-on' : ''} ${mirrorCapture ? 'mirror-capture' : ''}`}>
       <CameraFeed
         demoMode={demoMode}
         paused={scanPhase === 'loading' || scanPhase === 'flash'}
         onReady={onReady}
         onError={onCamError}
+        onMirrorChange={onMirrorChange}
       />
 
       <div className="hud-layer">
@@ -307,7 +313,7 @@ export default function App() {
                 phase={scanPhase}
                 tip={loadingTip}
                 photoUrl={lastPhoto}
-                mirrorPhoto={!demoMode}
+                mirrorPhoto={mirrorCapture}
               />
 
               {result && (
@@ -321,7 +327,7 @@ export default function App() {
                     unlocking={unlocking}
                     alreadyNote={alreadyNote}
                     photoUrl={lastPhoto}
-                    mirrorPhoto={!demoMode}
+                    mirrorPhoto={mirrorCapture}
                   />
                 </div>
               )}

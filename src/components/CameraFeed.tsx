@@ -6,6 +6,8 @@ interface CameraFeedProps {
   paused?: boolean
   onReady?: (video: HTMLVideoElement) => void
   onError?: (message: string) => void
+  /** True when preview/capture should be horizontally mirrored (front camera only). */
+  onMirrorChange?: (mirror: boolean) => void
 }
 
 async function resolvePlaylist(): Promise<string[]> {
@@ -21,11 +23,29 @@ async function resolvePlaylist(): Promise<string[]> {
   return available.length ? available : DEMO_VIDEO_PLAYLIST.slice(0, 2)
 }
 
-export function CameraFeed({ demoMode, paused = false, onReady, onError }: CameraFeedProps) {
+function trackIsFrontCamera(track: MediaStreamTrack): boolean {
+  const facing = track.getSettings?.().facingMode
+  if (facing === 'user') return true
+  if (facing === 'environment') return false
+  // Fallback: label heuristics when facingMode is missing (some Android browsers).
+  const label = (track.label || '').toLowerCase()
+  if (/back|rear|environment|後|后/.test(label)) return false
+  if (/front|user|face|前/.test(label)) return true
+  return false
+}
+
+export function CameraFeed({
+  demoMode,
+  paused = false,
+  onReady,
+  onError,
+  onMirrorChange,
+}: CameraFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const indexRef = useRef(0)
   const listRef = useRef<string[]>([])
   const [live, setLive] = useState(false)
+  const [mirror, setMirror] = useState(false)
 
   useEffect(() => {
     const video = videoRef.current
@@ -39,6 +59,11 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
     let cancelled = false
     const el = videoRef.current
     if (!el) return
+
+    function setMirrorMode(next: boolean) {
+      setMirror(next)
+      onMirrorChange?.(next)
+    }
 
     async function playDemoClip(video: HTMLVideoElement, index: number) {
       const list = listRef.current
@@ -70,6 +95,7 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
 
     async function start(video: HTMLVideoElement) {
       setLive(false)
+      setMirrorMode(false)
       const prev = video.srcObject as MediaStream | null
       prev?.getTracks().forEach((t) => t.stop())
       video.srcObject = null
@@ -108,6 +134,8 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
         video.removeAttribute('crossorigin')
         video.srcObject = stream
         video.loop = false
+        const track = stream.getVideoTracks()[0]
+        setMirrorMode(track ? trackIsFrontCamera(track) : false)
         await video.play()
         setLive(true)
         onReady?.(video)
@@ -128,10 +156,12 @@ export function CameraFeed({ demoMode, paused = false, onReady, onError }: Camer
     }
     // paused intentionally omitted from deps — handled by separate effect
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoMode, onReady, onError])
+  }, [demoMode, onReady, onError, onMirrorChange])
 
   return (
-    <div className={`camera-plane ${demoMode ? 'is-demo' : ''}`}>
+    <div
+      className={`camera-plane ${demoMode ? 'is-demo' : ''} ${mirror ? 'is-mirrored' : ''}`}
+    >
       <video ref={videoRef} playsInline muted autoPlay crossOrigin={demoMode ? 'anonymous' : undefined} />
       {!live && <div className="fallback-grid" />}
     </div>
