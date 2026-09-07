@@ -73,8 +73,8 @@ export function MapPanel({ entries, userLocation, focus, onFocusHotspot }: MapPa
         <div className="map-wrap">
           <MapContainer center={hkCenter} zoom={11} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <FlyTo target={focus || userLocation} />
 
