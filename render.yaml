@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: yezhi
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: ALLOW_DEMO_FALLBACK
+        value: "true"
+      - key: DEMO_MODE
+        value: "false"

@@ -1,0 +1,16 @@
+{
+  "name": "yezhi",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [8787],
+  "portsAttributes": {
+    "8787": {
+      "label": "野誌",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "npm ci && npm run build",
+  "postStartCommand": "npm start",
+  "containerEnv": {
+    "PORT": "8787"
+  }
+}
