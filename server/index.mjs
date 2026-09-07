@@ -1,9 +1,9 @@
 import cors from 'cors'
 import express from 'express'
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -27,17 +27,20 @@ function loadEnv() {
 loadEnv()
 
 const PORT = Number(process.env.PORT || 8787)
-const API_KEY = process.env.GEMINI_API_KEY
 const FORCE_DEMO = process.env.DEMO_MODE === '1' || process.env.DEMO_MODE === 'true'
 const ALLOW_DEMO_FALLBACK = process.env.ALLOW_DEMO_FALLBACK !== 'false'
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
+const REVERSE_BASE = (process.env.REVERSE_GEMINI_BASE || '').replace(/\/$/, '')
+const REVERSE_TOKEN = (process.env.REVERSE_API_TOKEN || '').trim()
+const MODEL = process.env.REVERSE_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash-medium'
+const USE_REVERSE = Boolean(REVERSE_BASE && REVERSE_TOKEN)
 
-if (!API_KEY && !FORCE_DEMO) {
-  console.error('Missing GEMINI_API_KEY in .env')
+if (!USE_REVERSE && !FORCE_DEMO) {
+  console.error('Missing REVERSE_GEMINI_BASE / REVERSE_API_TOKEN in .env')
   process.exit(1)
 }
 
-const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null
+const JSON_MODE_INSTRUCTION =
+  'Output requirements: return a single raw JSON value and nothing else. No prose before or after it, no explanation, and no markdown code fences.'
 
 const PROMPT = `你是 SPECTRA 野外生物掃描系統的物種鑑定模組，專精香港及華南常見動植物。
 請分析影像中的主要生物（動植物、真菌亦可），回傳嚴格 JSON（不要 markdown）：
@@ -199,6 +202,60 @@ function isLocationBlocked(err) {
   return /location is not supported/i.test(msg) || /User location/i.test(msg)
 }
 
+function parseModelJson(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    const match = String(text || '').match(/\{[\s\S]*\}/)
+    if (!match) throw new Error('Model returned non-JSON')
+    return JSON.parse(match[0])
+  }
+}
+
+async function identifyViaReverse(cleaned, mimeType, locationHint) {
+  const filename = String(mimeType).includes('png') ? 'capture.png' : 'capture.jpg'
+  const mediaType = String(mimeType).includes('png') ? 'image/png' : 'image/jpeg'
+  const prompt = [
+    `First, open and read the attached file: ${filename}. They are staged on disk rather than included in this message, so their contents are not visible until you read them. Answer from what they actually show.`,
+    `${PROMPT}\n${locationHint}`,
+    JSON_MODE_INSTRUCTION,
+  ].join('\n\n')
+
+  const response = await fetch(`${REVERSE_BASE}/v1/generate`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${REVERSE_TOKEN}`,
+      'x-request-id': `yezhi-${randomUUID()}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      prompt,
+      attachments: [
+        {
+          filename,
+          media_type: mediaType,
+          data: cleaned,
+        },
+      ],
+    }),
+  })
+
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || body?.ok === false) {
+    const detail =
+      (typeof body?.error === 'object' && body.error?.message) ||
+      body?.error ||
+      body?.detail ||
+      `HTTP ${response.status}`
+    throw new Error(String(detail).slice(0, 240))
+  }
+
+  const text = String(body?.text || '').trim()
+  if (!text) throw new Error('reverse API returned empty text')
+  return normalizeResult(parseModelJson(text))
+}
+
 const app = express()
 app.use(cors({ origin: true }))
 app.use(express.json({ limit: '12mb' }))
@@ -206,7 +263,8 @@ app.use(express.json({ limit: '12mb' }))
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'SPECTRA identify',
+    service: '野誌 identify',
+    provider: USE_REVERSE ? 'reverse' : 'demo',
     demo: FORCE_DEMO,
     model: MODEL,
   })
@@ -219,7 +277,7 @@ app.post('/api/identify', async (req, res) => {
       return res.status(400).json({ error: 'imageBase64 required' })
     }
 
-    if (FORCE_DEMO || !genAI) {
+    if (FORCE_DEMO || !USE_REVERSE) {
       return res.json({ ...demoResult(), demo: true })
     }
 
@@ -228,46 +286,16 @@ app.post('/api/identify', async (req, res) => {
       ? `拍攝座標約：緯度 ${Number(location.lat).toFixed(5)}, 經度 ${Number(location.lng).toFixed(5)}（香港附近）。`
       : '拍攝地點可能在香港。'
 
-    const model = genAI.getGenerativeModel({
-      model: MODEL,
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: 'application/json',
-      },
-    })
-
     try {
-      const result = await model.generateContent([
-        { text: `${PROMPT}\n${locationHint}` },
-        {
-          inlineData: {
-            mimeType: String(mimeType).includes('png') ? 'image/png' : 'image/jpeg',
-            data: cleaned,
-          },
-        },
-      ])
-
-      const text = result.response.text()
-      let parsed
-      try {
-        parsed = JSON.parse(text)
-      } catch {
-        const match = text.match(/\{[\s\S]*\}/)
-        if (!match) throw new Error('Model returned non-JSON')
-        parsed = JSON.parse(match[0])
-      }
-
-      return res.json({ ...normalizeResult(parsed), demo: false })
+      const parsed = await identifyViaReverse(cleaned, mimeType, locationHint)
+      return res.json({ ...parsed, demo: false, provider: 'reverse' })
     } catch (err) {
       if (ALLOW_DEMO_FALLBACK) {
-        console.warn('Gemini failed; serving demo fallback:', err instanceof Error ? err.message : err)
-        const blocked = isLocationBlocked(err)
+        console.warn('Reverse Gemini failed; serving demo fallback:', err instanceof Error ? err.message : err)
         return res.json({
           ...demoResult(),
           demo: true,
-          scanNotes: blocked
-            ? 'Gemini API 目前不支援此地區 IP。已啟用示範資料；請用支援地區網路／海外主機。'
-            : `Gemini 暫時無法連線（${err instanceof Error ? err.message.slice(0, 80) : 'error'}）。已改用示範資料。`,
+          scanNotes: `Reverse API 暫時無法連線（${err instanceof Error ? err.message.slice(0, 80) : 'error'}）。已改用示範資料。`,
         })
       }
       throw err
@@ -278,9 +306,7 @@ app.post('/api/identify', async (req, res) => {
     const locationBlocked = isLocationBlocked(err)
     res.status(500).json({
       error: locationBlocked ? 'region_blocked' : 'identify_failed',
-      message: locationBlocked
-        ? 'Google Gemini API 不支援目前所在地區。可改用支援地區的網路、把 API 部署到海外，或在 .env 設 DEMO_MODE=true。'
-        : message,
+      message,
     })
   }
 })
@@ -295,5 +321,7 @@ if (existsSync(distDir)) {
 
 app.listen(PORT, () => {
   console.log(`野誌 listening on http://localhost:${PORT}`)
-  console.log(`model=${MODEL} demo=${FORCE_DEMO} fallback=${ALLOW_DEMO_FALLBACK} static=${existsSync(distDir)}`)
+  console.log(
+    `provider=${USE_REVERSE ? 'reverse' : 'demo'} model=${MODEL} demo=${FORCE_DEMO} fallback=${ALLOW_DEMO_FALLBACK} static=${existsSync(distDir)}`,
+  )
 })

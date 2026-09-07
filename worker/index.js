@@ -27,6 +27,9 @@ const PROMPT = `你是 SPECTRA 野外生物掃描系統的物種鑑定模組，�
 4. rarity 依香港野外遇見機率粗估。
 5. 全文用繁體中文（學名與英文名除外）。`
 
+const JSON_MODE_INSTRUCTION =
+  'Output requirements: return a single raw JSON value and nothing else. No prose before or after it, no explanation, and no markdown code fences.'
+
 const DEMO = {
   detected: true,
   category: 'bird',
@@ -48,7 +51,8 @@ const DEMO = {
 }
 
 function normalizeResult(parsed) {
-  if (!Array.isArray(parsed?.candidates)) parsed = { ...DEMO, ...parsed, candidates: [] }
+  if (!parsed || typeof parsed !== 'object') parsed = { ...DEMO, candidates: [] }
+  if (!Array.isArray(parsed.candidates)) parsed.candidates = []
   parsed.candidates = parsed.candidates
     .slice(0, 4)
     .map((c) => ({
@@ -58,6 +62,16 @@ function normalizeResult(parsed) {
     }))
     .sort((a, b) => b.confidence - a.confidence)
   return parsed
+}
+
+function parseJsonText(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    const match = String(text || '').match(/\{[\s\S]*\}/)
+    if (!match) throw new Error('Model returned non-JSON')
+    return JSON.parse(match[0])
+  }
 }
 
 function json(data, status = 200) {
@@ -70,8 +84,58 @@ function json(data, status = 200) {
   })
 }
 
+function reverseConfigured(env) {
+  return Boolean(env.REVERSE_GEMINI_BASE && env.REVERSE_API_TOKEN)
+}
+
+async function identifyViaReverse(env, cleaned, mimeType, locationHint) {
+  const base = String(env.REVERSE_GEMINI_BASE).replace(/\/$/, '')
+  const model = env.REVERSE_GEMINI_MODEL || 'gemini-3.6-flash-medium'
+  const filename = String(mimeType).includes('png') ? 'capture.png' : 'capture.jpg'
+  const mediaType = String(mimeType).includes('png') ? 'image/png' : 'image/jpeg'
+  const prompt = [
+    `First, open and read the attached file: ${filename}. They are staged on disk rather than included in this message, so their contents are not visible until you read them. Answer from what they actually show.`,
+    `${PROMPT}\n${locationHint}`,
+    JSON_MODE_INSTRUCTION,
+  ].join('\n\n')
+
+  const reverseRes = await fetch(`${base}/v1/generate`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${env.REVERSE_API_TOKEN}`,
+      'x-request-id': `yezhi-${crypto.randomUUID()}`,
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      attachments: [
+        {
+          filename,
+          media_type: mediaType,
+          data: cleaned,
+        },
+      ],
+    }),
+  })
+
+  const body = await reverseRes.json().catch(() => ({}))
+  if (!reverseRes.ok || body?.ok === false) {
+    const detail =
+      (typeof body?.error === 'object' && body.error?.message) ||
+      body?.error ||
+      body?.detail ||
+      `HTTP ${reverseRes.status}`
+    throw new Error(String(detail).slice(0, 240))
+  }
+
+  const text = String(body?.text || '').trim()
+  if (!text) throw new Error('reverse API returned empty text')
+  return normalizeResult(parseJsonText(text))
+}
+
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url)
 
     if (request.method === 'OPTIONS') {
@@ -88,7 +152,8 @@ export default {
       return json({
         ok: true,
         service: '野誌 identify',
-        model: env.GEMINI_MODEL || 'gemini-3.6-flash',
+        provider: reverseConfigured(env) ? 'reverse' : 'demo',
+        model: env.REVERSE_GEMINI_MODEL || 'gemini-3.6-flash-medium',
         demo: env.DEMO_MODE === 'true',
       })
     }
@@ -103,7 +168,7 @@ export default {
           return json({ error: 'imageBase64 required' }, 400)
         }
 
-        if (env.DEMO_MODE === 'true' || !env.GEMINI_API_KEY) {
+        if (env.DEMO_MODE === 'true' || !reverseConfigured(env)) {
           return json({ ...normalizeResult(structuredClone(DEMO)), demo: true })
         }
 
@@ -111,75 +176,22 @@ export default {
         const locationHint = location
           ? `拍攝座標約：緯度 ${Number(location.lat).toFixed(5)}, 經度 ${Number(location.lng).toFixed(5)}（香港附近）。`
           : '拍攝地點可能在香港。'
-        const model = env.GEMINI_MODEL || 'gemini-3.6-flash'
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`
 
-        const geminiRes = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: `${PROMPT}\n${locationHint}` },
-                  {
-                    inline_data: {
-                      mime_type: String(mimeType).includes('png') ? 'image/png' : 'image/jpeg',
-                      data: cleaned,
-                    },
-                  },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.2,
-              responseMimeType: 'application/json',
-            },
-          }),
-        })
-
-        if (!geminiRes.ok) {
-          const errText = await geminiRes.text()
-          console.warn('Gemini error', geminiRes.status, errText.slice(0, 300))
-          if (env.ALLOW_DEMO_FALLBACK !== 'false') {
-            const blocked = /location is not supported|User location/i.test(errText)
-            return json({
-              ...normalizeResult(structuredClone(DEMO)),
-              demo: true,
-              scanNotes: blocked
-                ? 'Gemini API 目前不支援此地區 IP。已啟用示範資料。'
-                : `Gemini 暫時無法連線。已改用示範資料。`,
-            })
-          }
-          return json({ error: 'identify_failed', message: errText.slice(0, 200) }, 500)
-        }
-
-        const payload = await geminiRes.json()
-        const text =
-          payload?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || ''
-        let parsed
-        try {
-          parsed = JSON.parse(text)
-        } catch {
-          const match = text.match(/\{[\s\S]*\}/)
-          if (!match) throw new Error('Model returned non-JSON')
-          parsed = JSON.parse(match[0])
-        }
-        return json({ ...normalizeResult(parsed), demo: false })
+        const parsed = await identifyViaReverse(env, cleaned, mimeType, locationHint)
+        return json({ ...parsed, demo: false, provider: 'reverse' })
       } catch (err) {
         console.error(err)
         if (env.ALLOW_DEMO_FALLBACK !== 'false') {
           return json({
             ...normalizeResult(structuredClone(DEMO)),
             demo: true,
-            scanNotes: `辨識暫時失敗，已改用示範資料。`,
+            scanNotes: `辨識暫時失敗（${err instanceof Error ? err.message.slice(0, 80) : 'error'}），已改用示範資料。`,
           })
         }
         return json({ error: 'identify_failed', message: String(err) }, 500)
       }
     }
 
-    // Static assets (Workers Assets)
     if (env.ASSETS) {
       return env.ASSETS.fetch(request)
     }

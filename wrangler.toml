@@ -9,6 +9,7 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 
 [vars]
-GEMINI_MODEL = "gemini-3.6-flash"
+REVERSE_GEMINI_BASE = "http://152.42.220.127:8085/antigravity"
+REVERSE_GEMINI_MODEL = "gemini-3.6-flash-medium"
 ALLOW_DEMO_FALLBACK = "true"
 DEMO_MODE = "false"
