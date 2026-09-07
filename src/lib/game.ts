@@ -266,11 +266,15 @@ export function resetWithDemoData(): PlayerState {
   return next
 }
 
+const DEMO_CLIP_BASE = import.meta.env.PROD
+  ? 'https://cdn.jsdelivr.net/gh/kelsoooooo/yezhi@main/public/demo/clips'
+  : '/demo/clips'
+
 export const DEMO_VIDEO_PLAYLIST = [
-  '/demo/clips/01-kingfisher.webm',
-  '/demo/clips/02-butterfly.webm',
-  '/demo/clips/03-bee.webm',
-  '/demo/clips/04-heron.webm',
+  `${DEMO_CLIP_BASE}/01-kingfisher.webm`,
+  `${DEMO_CLIP_BASE}/02-butterfly.webm`,
+  `${DEMO_CLIP_BASE}/03-bee.webm`,
+  `${DEMO_CLIP_BASE}/04-heron.webm`,
 ]
 
 export const DEMO_MODE_KEY = 'yezhi-demo-mode'
