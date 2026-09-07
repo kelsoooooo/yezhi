@@ -149,12 +149,34 @@ export default {
     }
 
     if (url.pathname === '/api/health') {
+      let reverseReach = null
+      if (reverseConfigured(env)) {
+        try {
+          const base = String(env.REVERSE_GEMINI_BASE).replace(/\/$/, '')
+          const probe = await fetch(`${base}/v1/models`, {
+            headers: {
+              authorization: `Bearer ${env.REVERSE_API_TOKEN}`,
+              'user-agent': 'yezhi-worker/1.0',
+              accept: 'application/json',
+            },
+          })
+          const bodyText = await probe.text()
+          reverseReach = {
+            status: probe.status,
+            baseHost: new URL(base).host,
+            body: bodyText.slice(0, 240),
+          }
+        } catch (err) {
+          reverseReach = { error: String(err).slice(0, 160) }
+        }
+      }
       return json({
         ok: true,
         service: '野誌 identify',
         provider: reverseConfigured(env) ? 'reverse' : 'demo',
         model: env.REVERSE_GEMINI_MODEL || 'gemini-3.6-flash-medium',
         demo: env.DEMO_MODE === 'true',
+        reverseReach,
       })
     }
 

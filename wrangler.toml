@@ -1,6 +1,7 @@
 name = "yezhi"
 main = "worker/index.js"
 compatibility_date = "2026-03-01"
+compatibility_flags = ["allow_custom_ports"]
 workers_dev = true
 
 [assets]
@@ -9,7 +10,7 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 
 [vars]
-REVERSE_GEMINI_BASE = "http://152.42.220.127:8085/antigravity"
+REVERSE_GEMINI_BASE = "http://152.42.220.127.sslip.io:8085/antigravity"
 REVERSE_GEMINI_MODEL = "gemini-3.6-flash-medium"
 ALLOW_DEMO_FALLBACK = "true"
 DEMO_MODE = "false"
